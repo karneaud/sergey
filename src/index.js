@@ -125,7 +125,7 @@ const clearOutputFolder = async () => {
       fs.readdirSync(path).forEach(function(file, index) {
         const newPath = path + '/' + file;
         if (fs.lstatSync(newPath).isDirectory()) {
-          deleteFolder(newPath);
+         // deleteFolder(newPath);
         } else {
           fs.unlinkSync(newPath);
         }

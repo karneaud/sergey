@@ -2,6 +2,7 @@
 const fs = require('fs');
 const { performance } = require('perf_hooks');
 const marked = require('marked');
+const fsPath = require('path').resolve;
 require('dotenv').config();
 
 /**
@@ -33,7 +34,8 @@ const ACTIVE_CLASS =
 const EXCLUDE = (getEnv('--exclude=', 'SERGEY_EXCLUDE') || '')
   .split(',')
   .map(x => x.trim())
-  .filter(Boolean);
+  .filter(Boolean)
+	.map(x => new RegExp(x));
 
 const VERBOSE = false;
 const cachedImports = {};
@@ -123,9 +125,9 @@ const clearOutputFolder = async () => {
   const deleteFolder = path => {
     if (fs.existsSync(path)) {
       fs.readdirSync(path).forEach(function(file, index) {
-        const newPath = path + '/' + file;
+        const newPath = path.concat(path.endsWith('/')? '' : '/' , file);
         if (fs.lstatSync(newPath).isDirectory()) {
-         // deleteFolder(newPath);
+          deleteFolder(newPath);
         } else {
           fs.unlinkSync(newPath);
         }
@@ -156,7 +158,7 @@ const getAllFiles = (path, filter, exclude = false) => {
 
   if (fs.existsSync(path)) {
     fs.readdirSync(path).forEach((file, index) => {
-      if (filesToIgnore.find(x => file.startsWith(x))) {
+      if (filesToIgnore.find(x => (x instanceof RegExp? x.test(file) : file.startsWith(x)))) {
         return;
       }
 
@@ -370,10 +372,9 @@ const compileLinks = (body, path) => {
 
 const compileFolder = async (localFolder, localPublicFolder) => {
   const fullFolderPath = `${ROOT}${localFolder}`;
-  const fullPublicPath = `${ROOT}${localPublicFolder}`;
-
+  const fullPublicPath = fsPath(`${ROOT}${localPublicFolder}`);
   if (localPublicFolder) {
-    await createFolder(fullPublicPath);
+  	await createFolder(fullPublicPath);
   }
 
   return new Promise((resolve, reject) => {
@@ -385,13 +386,12 @@ const compileFolder = async (localFolder, localPublicFolder) => {
       Promise.all(
         files
           .filter(x => {
-            return !excludedFolders.find(y => x.startsWith(y));
+            return !excludedFolders.find(y => (y instanceof RegExp ? y.test(x) : x.startsWith(y) ));
           })
           .map(async localFilePath => {
-            const fullFilePath = `${fullFolderPath}${localFilePath}`;
-            const fullPublicFilePath = `${fullPublicPath}${localFilePath}`;
-            const fullLocalFilePath = `/${localFolder}${localFilePath}`;
-
+            const fullFilePath = fsPath(`${fullFolderPath}/${localFilePath}`);
+            const fullPublicFilePath = fsPath(`${fullPublicPath}/${localFilePath}`);
+            const fullLocalFilePath = fsPath(`/${localFolder}/${localFilePath}`);
             if (localFilePath.endsWith('.html')) {
               return readFile(fullFilePath)
                 .then(compileTemplate)
@@ -400,15 +400,15 @@ const compileFolder = async (localFolder, localPublicFolder) => {
             }
 
             return new Promise((resolve, reject) => {
-              fs.stat(fullFilePath, async (err, stat) => {
+            	fs.stat(fullFilePath, async (err, stat) => {
                 if (err) {
                   return reject(err);
                 }
-
                 if (stat && stat.isDirectory()) {
+                 
                   await compileFolder(
-                    `${localFolder}${localFilePath}/`,
-                    `${OUTPUT_LOCAL}/${localFolder}${localFilePath}/`
+                    `${localFolder}/${localFilePath}`,
+                    `${OUTPUT_LOCAL}/${localFolder}/${localFilePath}`
                   );
                 } else {
                   await copyFile(fullFilePath, fullPublicFilePath);
@@ -444,7 +444,6 @@ const compileFiles = async () => {
         await prepareImports(CONTENT);
       } catch (e) {}
     }
-
     await compileFolder('', `${OUTPUT_LOCAL}/`);
 
     const end = performance.now();
@@ -489,13 +488,15 @@ const sergeyRuntime = async () => {
     const watchRoot = ROOT.endsWith('/')
       ? ROOT.substring(0, ROOT.length - 1)
       : ROOT;
-    let ignored = (OUTPUT.endsWith('/')
+    let ignored = [(OUTPUT.endsWith('/')
       ? OUTPUT.substring(0, OUTPUT.length - 1)
       : OUTPUT
-    ).replace('./', '');
+    ).replace('./', ''), ...excludedFolders];
 
-    const task = async () => await compileFiles();
-
+    const task = async (path,stats) => {
+    	 if (stats) console.log(`File ${path} changed size to ${stats.size}`);
+    	return await compileFiles()
+    };
     const watcher = chokidar.watch(watchRoot, { ignored, ignoreInitial: true });
     watcher.on('change', task);
     watcher.on('add', task);
